@@ -318,6 +318,20 @@ pktgen_config_ports(void)
 		if (info->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 			conf.txmode.offloads |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 
+		if (info->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP) {
+			pktgen_log_warning("Enabling tx send on timestamp offload");
+			conf.txmode.offloads |= DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP;
+		}
+		else 
+			pktgen_log_warning("Tx send on timestamp offload not supported");
+
+		if (info->dev_info.rx_offload_capa & DEV_RX_OFFLOAD_TIMESTAMP) {
+			pktgen_log_info("Enabling rx hardware timestamp offload");
+			conf.rxmode.offloads |= DEV_RX_OFFLOAD_TIMESTAMP;
+		}
+		else
+			pktgen_log_info("Rx hardware timestamp offload not supported");
+
 		if (rt.rx > 1) {
 			conf.rx_adv_conf.rss_conf.rss_key = NULL;
 			conf.rx_adv_conf.rss_conf.rss_hf &=
