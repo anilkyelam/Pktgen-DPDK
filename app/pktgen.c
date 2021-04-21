@@ -215,6 +215,103 @@ pktgen_find_matching_ipdst(port_info_t *info, uint32_t addr)
 	return pkt;
 }
 
+/******* Packet pacing/timestamp experiments *********************/
+
+/* Timestamp util methods inspired from dpdk/app/test-pmd/util.c */
+static inline bool
+is_rx_timestamp_enabled()
+{
+	static bool enabled, checked = false;
+	if (!checked) {
+		enabled = rte_mbuf_dynflag_lookup(
+			RTE_MBUF_DYNFLAG_RX_TIMESTAMP_NAME, NULL) >= 0;
+		checked = true;
+	}
+	return enabled;
+}
+
+static inline bool
+is_tx_send_on_timestamp_enabled()
+{
+	static bool enabled, checked = false;
+	if (!checked) {
+		enabled = rte_mbuf_dynflag_lookup(
+			RTE_MBUF_DYNFLAG_TX_TIMESTAMP_NAME, NULL) >= 0;
+		checked = true;
+	}
+	return enabled;
+}
+
+static inline int
+get_timestamp_offset(){
+	static int offset = -1, checked = false;
+	if (!checked) {	
+		offset = rte_mbuf_dynfield_lookup(
+			RTE_MBUF_DYNFIELD_TIMESTAMP_NAME, NULL);
+		checked = true;
+	}
+	return offset;
+}
+
+static inline rte_mbuf_timestamp_t
+get_timestamp(const struct rte_mbuf *mbuf)
+{
+	int offset = get_timestamp_offset();
+	if (offset < 0)	return 0;
+	return *RTE_MBUF_DYNFIELD(mbuf, offset, rte_mbuf_timestamp_t *);
+}
+
+static inline int
+set_timestamp(const struct rte_mbuf *mbuf, rte_mbuf_timestamp_t tstamp)
+{
+	int offset = get_timestamp_offset();
+	if (offset < 0)	return -1;
+	*RTE_MBUF_DYNFIELD(mbuf, offset, rte_mbuf_timestamp_t *) = tstamp;
+	return 0;
+}
+
+
+static __inline__ void
+// pktgen_check_rx_tstamp(port_info_t *info, struct rte_mbuf **pkts, uint16_t nb_pkts)
+pktgen_check_rx_tstamp(port_info_t *info __rte_unused, 
+						struct rte_mbuf **pkts, uint16_t nb_pkts)
+{
+    int i;
+	for (i = 0; i < nb_pkts; i++) {
+		if (is_rx_timestamp_enabled(pkts[i])) {
+			uint64_t time;
+			rte_eth_read_clock(info->pid, &time);
+			pktgen_log_warning("RX Timestamp on the packet: %lu", get_timestamp(pkts[i]));
+			pktgen_log_warning("clock time: %lu", time);
+		}
+	}
+
+	// // Get Offload Caps
+	// // WARNING: RX Offload caps: 1600031 1599519
+	// // WARNING: TX Offload caps: 2987695 0
+	// struct rte_eth_dev_info dev_info;
+	// rte_eth_dev_info_get(info->pid, &dev_info);
+	// pktgen_log_warning("RX Offload caps: %lu %lu", dev_info.rx_offload_capa, dev_info.rx_queue_offload_capa);
+	// pktgen_log_warning("TX Offload caps: %lu %lu", dev_info.tx_offload_capa, dev_info.tx_queue_offload_capa);
+}
+
+static inline void
+pktgen_tx_send_on_tstamp(port_info_t *info __rte_unused,
+                    	struct rte_mbuf **mbufs, int cnt)
+{
+	int i;
+	for (i = 0; i < cnt; i++) {
+		if (is_tx_send_on_timestamp_enabled()) {
+			uint64_t time;
+			rte_eth_read_clock(info->pid, &time);
+
+			// pktgen_log_warning("Setting tx timestamp to %lu + 2", time);
+			time += 2000000000ULL;		// + 2 secs
+			set_timestamp(mbufs[i], time);
+		}
+	}
+}
+
 static __inline__ tstamp_t *
 pktgen_tstamp_pointer(port_info_t *info, struct rte_mbuf *m, int32_t seq_idx)
 {
@@ -326,6 +423,8 @@ pktgen_send_burst(port_info_t *info, uint16_t qid)
 
 		if (tstamp)
 			pktgen_tstamp_apply(info, pkts, cnt, seq_idx);
+
+		pktgen_tx_send_on_tstamp(info, pkts, cnt);
 
 		ret = rte_eth_tx_burst(info->pid, qid, pkts, cnt);
 
@@ -1190,6 +1289,8 @@ pktgen_main_receive(port_info_t *info, uint8_t lid,
 		qstats->rxbytes += rte_pktmbuf_data_len(pkts_burst[i]);
 
 	pktgen_recv_tstamp(info, pkts_burst, nb_rx);
+
+	pktgen_check_rx_tstamp(info, pkts_burst, nb_rx);
 
 	/* packets are not freed in the next call. */
 	pktgen_packet_classify_bulk(pkts_burst, nb_rx, pid);
