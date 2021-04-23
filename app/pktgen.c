@@ -231,14 +231,17 @@ is_rx_timestamp_enabled()
 }
 
 static inline bool
-is_tx_send_on_timestamp_enabled()
+is_tx_send_on_timestamp_enabled(uint64_t *mask)
 {
 	static bool enabled, checked = false;
+	static int nbit;
 	if (!checked) {
-		enabled = rte_mbuf_dynflag_lookup(
-			RTE_MBUF_DYNFLAG_TX_TIMESTAMP_NAME, NULL) >= 0;
+		nbit = rte_mbuf_dynflag_lookup(RTE_MBUF_DYNFLAG_TX_TIMESTAMP_NAME, NULL);
+		// pktgen_log_warning("nbit: %d", nbit);
+		enabled = nbit >= 0;
 		checked = true;
 	}
+	*mask = 1ULL << nbit;
 	return enabled;
 }
 
@@ -262,11 +265,14 @@ get_timestamp(const struct rte_mbuf *mbuf)
 }
 
 static inline int
-set_timestamp(const struct rte_mbuf *mbuf, rte_mbuf_timestamp_t tstamp)
+set_timestamp(struct rte_mbuf *mbuf, rte_mbuf_timestamp_t tstamp, uint64_t olmask)
 {
 	int offset = get_timestamp_offset();
 	if (offset < 0)	return -1;
-	*RTE_MBUF_DYNFIELD(mbuf, offset, rte_mbuf_timestamp_t *) = tstamp;
+	// pktgen_log_warning("offset: %lu, ol_flags: %lx, mask: %lx", 
+	// 		offset, mbuf->ol_flags, olmask);
+	mbuf->ol_flags |= olmask;
+	*RTE_MBUF_DYNFIELD(mbuf, offset, rte_mbuf_timestamp_t*) = tstamp;
 	return 0;
 }
 
@@ -279,12 +285,13 @@ pktgen_check_rx_tstamp(port_info_t *info __rte_unused,
     int i;
 	for (i = 0; i < nb_pkts; i++) {
 		if (is_rx_timestamp_enabled(pkts[i])) {
-			uint64_t time;
-			rte_eth_read_clock(info->pid, &time);
-			pktgen_log_warning("RX Timestamp on the packet: %lu", get_timestamp(pkts[i]));
-			pktgen_log_warning("clock time: %lu", time);
+			// pktgen_log_warning("RX: %lu", get_timestamp(pkts[i]));
+			pktgen_log_warning("%lu", get_timestamp(pkts[i]));
 		}
 	}
+
+	// struct rte_eth_xstat xstats;
+	// rte_eth_xstats_get(info->pid, &xstats, );
 
 	// // Get Offload Caps
 	// // WARNING: RX Offload caps: 1600031 1599519
@@ -300,14 +307,18 @@ pktgen_tx_send_on_tstamp(port_info_t *info __rte_unused,
                     	struct rte_mbuf **mbufs, int cnt)
 {
 	int i;
+	uint64_t ol_mask;
 	for (i = 0; i < cnt; i++) {
-		if (is_tx_send_on_timestamp_enabled()) {
+		if (is_tx_send_on_timestamp_enabled(&ol_mask)) {
 			uint64_t time;
 			rte_eth_read_clock(info->pid, &time);
 
 			// pktgen_log_warning("Setting tx timestamp to %lu + 2", time);
-			time += 2000000000ULL;		// + 2 secs
-			set_timestamp(mbufs[i], time);
+			time += 1000000000ULL;		// (+4 secs seems to be the limit)
+			if (set_timestamp(mbufs[i], time, ol_mask) != 0)
+				pktgen_log_warning("Setting tx timestamp failed!");			
+			// pktgen_log_warning("CLK: %lu, TX: %lu + 1sec", time, time);
+			pktgen_log_warning("%lu", time);
 		}
 	}
 }
