@@ -56,6 +56,10 @@ else
 	lua_dep = dependency('', required: false)
 endif
 
+if get_option('enable_tdma')
+	add_project_arguments('-DTDMA_ON_CX6', language: 'c')
+endif
+
 dpdk = dependency('libdpdk', required: true)
 # message('prefix: ' + get_option('prefix') + ' libdir: ' + get_option('libdir'))
 

@@ -20,6 +20,9 @@ rebuild: FORCE
 buildlua: FORCE
 	${Build} buildlua
 
+buildtdma: FORCE
+	${Build} buildtdma
+
 debuglua: FORCE
 	${Build} debuglua
 

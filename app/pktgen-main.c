@@ -457,11 +457,13 @@ main(int argc, char **argv)
 	pktgen_init_log();
 	pktgen_cpu_init();
 
+#ifdef TDMA_ON_CX6
 	/* Redirect dpdk logs. Help: https://doc.dpdk.org/guides-18.02/contributing/coding_style.html#logging-and-errors */
 	rte_openlog_stream(fopen("/etc/dpdk.log", "w"));
 	rte_log_set_global_level(RTE_LOG_DEBUG);
 	rte_log_set_level(RTE_LOGTYPE_PMD, RTE_LOG_DEBUG);
 	rte_log_set_level_regexp("pmd.*", RTE_LOG_DEBUG);
+#endif
 
 	/* initialize EAL */
 	ret = rte_eal_init(argc, argv);

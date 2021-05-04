@@ -17,10 +17,14 @@ export sdk_dir="${PKTGEN_SDK:-$currdir}"
 export target_dir="${PKTGEN_TARGET:-usr}"
 export build_dir="${PKTGEN_BUILD_DIR:-Builddir}"
 export lua_enabled="-Denable_lua=false"
+export tdma_enabled="-Denable_tdma=false"
 export gui_enabled="-Denable_gui=false"
 
 if [[ -n ${enable_lua} ]]; then
 	export lua_enabled="-Denable_lua=true"
+fi
+if [[ -n ${enable_tdma} ]]; then
+	export tdma_enabled="-Denable_tdma=true"
 fi
 if [[ -n ${enable_gui} ]]; then
 	export gui_enabled="-Denable_gui=true"
@@ -31,6 +35,7 @@ target_path=$sdk_dir/$target_dir
 
 echo ">>> lua_enabled      : '"$lua_enabled"'"
 echo ">>> gui_enabled      : '"$gui_enabled"'"
+echo ">>> tdma_enabled      : '"$tdma_enabled"'"
 echo ">>> SDK Directory    : '"$sdk_dir"'"
 echo ">>> Build Directory  : '"$build_path"'"
 echo ">>> Target Directory : '"$target_path"'"
@@ -39,8 +44,8 @@ echo ""
 function run_meson() {
 	btype="-Dbuildtype="$buildtype
 
-	echo meson $btype $lua_enabled $gui_enabled $build_dir
-	meson $btype $lua_enabled $gui_enabled $build_dir
+	echo meson $btype $lua_enabled $gui_enabled $tdma_enabled $build_dir
+	meson $btype $lua_enabled $gui_enabled $tdma_enabled $build_dir
 }
 
 function ninja_build() {
@@ -98,6 +103,7 @@ usage() {
 	echo "  build       - same as 'make' with no arguments"
 	echo "  buildgui    - same as 'make build' except enable gui build"
 	echo "  buildlua    - same as 'make build' except enable Lua build"
+	echo "  buildtdma   - same as 'make build' except enable TDMA build"
 	echo "  debug       - turn off optimization, may need to do 'clean' then 'debug' the first time"
 	echo "  debugopt    - turn optimization on with -O2, may need to do 'clean' then 'debugopt' the first time"
 	echo "  clean       - remove the '"$build_dir"' and '"$target_dir"' directories then exit"
@@ -127,6 +133,11 @@ do
 
 	'buildlua')
 		lua_enabled="-Denable_lua=true"
+		ninja_build && ninja_install
+		;;
+
+	'buildtdma')
+		tdma_enabled="-Denable_tdma=true"
 		ninja_build && ninja_install
 		;;
 

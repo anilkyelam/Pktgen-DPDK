@@ -318,6 +318,7 @@ pktgen_config_ports(void)
 		if (info->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 			conf.txmode.offloads |= DEV_TX_OFFLOAD_MBUF_FAST_FREE;
 
+#ifdef TDMA_ON_CX6
 		if (info->dev_info.tx_offload_capa & DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP) {
 			pktgen_log_warning("Enabling tx send on timestamp offload");
 			conf.txmode.offloads |= DEV_TX_OFFLOAD_SEND_ON_TIMESTAMP;
@@ -331,6 +332,7 @@ pktgen_config_ports(void)
 		}
 		else
 			pktgen_log_info("Rx hardware timestamp offload not supported");
+#endif
 
 		if (rt.rx > 1) {
 			conf.rx_adv_conf.rss_conf.rss_key = NULL;

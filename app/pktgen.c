@@ -215,6 +215,7 @@ pktgen_find_matching_ipdst(port_info_t *info, uint32_t addr)
 	return pkt;
 }
 
+#ifdef TDMA_ON_CX6
 /******* Packet pacing/timestamp experiments *********************/
 
 /* Timestamp util methods inspired from dpdk/app/test-pmd/util.c */
@@ -257,7 +258,7 @@ get_timestamp_offset(){
 }
 
 static inline rte_mbuf_timestamp_t
-get_timestamp(const struct rte_mbuf *mbuf)
+get_rx_timestamp(const struct rte_mbuf *mbuf)
 {
 	int offset = get_timestamp_offset();
 	if (offset < 0)	return 0;
@@ -271,6 +272,7 @@ set_timestamp(struct rte_mbuf *mbuf, rte_mbuf_timestamp_t tstamp, uint64_t olmas
 	if (offset < 0)	return -1;
 	// pktgen_log_warning("offset: %lu, ol_flags: %lx, mask: %lx", 
 	// 		offset, mbuf->ol_flags, olmask);
+	/* The tx_pp feature can be enabled on pkt-by-pkt basis using this flag */
 	mbuf->ol_flags |= olmask;
 	*RTE_MBUF_DYNFIELD(mbuf, offset, rte_mbuf_timestamp_t*) = tstamp;
 	return 0;
@@ -286,42 +288,34 @@ pktgen_check_rx_tstamp(port_info_t *info __rte_unused,
 	for (i = 0; i < nb_pkts; i++) {
 		if (is_rx_timestamp_enabled(pkts[i])) {
 			// pktgen_log_warning("RX: %lu", get_timestamp(pkts[i]));
-			pktgen_log_warning("%lu", get_timestamp(pkts[i]));
-		}
-	}
-
-	// struct rte_eth_xstat xstats;
-	// rte_eth_xstats_get(info->pid, &xstats, );
-
-	// // Get Offload Caps
-	// // WARNING: RX Offload caps: 1600031 1599519
-	// // WARNING: TX Offload caps: 2987695 0
-	// struct rte_eth_dev_info dev_info;
-	// rte_eth_dev_info_get(info->pid, &dev_info);
-	// pktgen_log_warning("RX Offload caps: %lu %lu", dev_info.rx_offload_capa, dev_info.rx_queue_offload_capa);
-	// pktgen_log_warning("TX Offload caps: %lu %lu", dev_info.tx_offload_capa, dev_info.tx_queue_offload_capa);
-}
-
-static inline void
-pktgen_tx_send_on_tstamp(port_info_t *info __rte_unused,
-                    	struct rte_mbuf **mbufs, int cnt)
-{
-	int i;
-	uint64_t ol_mask;
-	for (i = 0; i < cnt; i++) {
-		if (is_tx_send_on_timestamp_enabled(&ol_mask)) {
-			uint64_t time;
-			rte_eth_read_clock(info->pid, &time);
-
-			// pktgen_log_warning("Setting tx timestamp to %lu + 2", time);
-			time += 1000000000ULL;		// (+4 secs seems to be the limit)
-			if (set_timestamp(mbufs[i], time, ol_mask) != 0)
-				pktgen_log_warning("Setting tx timestamp failed!");			
-			// pktgen_log_warning("CLK: %lu, TX: %lu + 1sec", time, time);
-			pktgen_log_warning("%lu", time);
+			pktgen_log_warning("%lu", get_rx_timestamp(pkts[i]));
 		}
 	}
 }
+
+// static inline void
+// pktgen_tx_send_on_tstamp(port_info_t *info __rte_unused,
+//                     	struct rte_mbuf **mbufs, int cnt)
+// {
+// 	int i;
+// 	uint64_t ol_mask;
+// 	for (i = 0; i < cnt; i++) {
+// 		if (is_tx_send_on_timestamp_enabled(&ol_mask)) {
+// 			uint64_t time;
+// 			rte_eth_read_clock(info->pid, &time);
+
+// 			/* Setting timestamp on mbuf so that it'll be scheduled at a certain time */
+// 			// time += 1000000000ULL;		// (+4 secs seems to be the limit)
+// 			// if (set_timestamp(mbufs[i], time, ol_mask) != 0)	pktgen_log_warning("Setting tx timestamp failed!");			
+// 			// // pktgen_log_warning("CLK: %lu, TX: %lu + 1sec", time, time);
+// 			// pktgen_log_warning("%lu", time);
+
+// 			/* Insert timestamp into the packet */
+
+// 		}
+// 	}
+// }
+#endif
 
 static __inline__ tstamp_t *
 pktgen_tstamp_pointer(port_info_t *info, struct rte_mbuf *m, int32_t seq_idx)
@@ -361,7 +355,11 @@ pktgen_tstamp_apply(port_info_t *info __rte_unused,
 
 		tstamp = pktgen_tstamp_pointer(info, mbufs[i], seq_idx);
 
+#ifdef TDMA_ON_CX6
+		rte_eth_read_clock(info->pid, &tstamp->timestamp);
+#else
 		tstamp->timestamp  = rte_rdtsc_precise();
+#endif
 		tstamp->magic      = TSTAMP_MAGIC;
 
 		/* Construct the UDP header */
@@ -435,7 +433,9 @@ pktgen_send_burst(port_info_t *info, uint16_t qid)
 		if (tstamp)
 			pktgen_tstamp_apply(info, pkts, cnt, seq_idx);
 
-		pktgen_tx_send_on_tstamp(info, pkts, cnt);
+// #ifdef TDMA_ON_CX6
+// 		pktgen_tx_send_on_tstamp(info, pkts, cnt);
+// #endif
 
 		ret = rte_eth_tx_burst(info->pid, qid, pkts, cnt);
 
@@ -498,7 +498,15 @@ pktgen_recv_tstamp(port_info_t *info, struct rte_mbuf **pkts, uint16_t nb_pkts)
 			tstamp = pktgen_tstamp_pointer(info, pkts[i], seq_idx);
 
 			if (tstamp->magic == TSTAMP_MAGIC) {
+#ifdef TDMA_ON_CX6
+				/* We already made sure that the rx hw timestamping is enabled. 
+					Hope that's enough to assume that the timestamp exists */
+				uint64_t rxstamp = get_rx_timestamp(pkts[i]);
+				lat = (rxstamp - tstamp->timestamp);
+				// pktgen_log_warning("tstamps: %lu %lu, diff: %lu", rxstamp, tstamp->timestamp, lat);
+#else
 				lat = (rte_rdtsc_precise() - tstamp->timestamp);
+#endif
 				
                 if (flags & (SEND_LATENCY_PKTS | SEND_RATE_PACKETS))
                 {
@@ -517,12 +525,17 @@ pktgen_recv_tstamp(port_info_t *info, struct rte_mbuf **pkts, uint16_t nb_pkts)
                 {
                     /* Record latency if it's time for sampling (seperately per lcore) */
                     latsamp_stats_t* stats = &info->latsamp_stats[qid];
+
                     uint64_t now = rte_rdtsc_precise();
-                    stats->pkt_counter++;
+					stats->pkt_counter++;
                     if (stats->next == 0 || now >= stats->next) {
                         if (stats->idx < stats->num_samples) {
-                            // stats->data[stats->idx] = lat;
-                            stats->data[stats->idx] = lat * 1000000000 / rte_get_tsc_hz();		/* Do we want to keep it as cycles? */
+#ifdef TDMA_ON_CX6
+                            stats->data[stats->idx] = lat;										/* We already get time in nanoseconds here */
+#else
+                            // stats->data[stats->idx] = lat;									/* Keep it as cycles */
+                            stats->data[stats->idx] = lat * 1000000000 / rte_get_tsc_hz();		/* Convert to nanoseconds */
+#endif
                             stats->idx++;
                         }
 
@@ -535,8 +548,8 @@ pktgen_recv_tstamp(port_info_t *info, struct rte_mbuf **pkts, uint16_t nb_pkts)
                         }
                         else 
                         {	// LATSAMPLER_SIMPLE or LATSAMPLER_UNSPEC
-                            stats->next = now + rte_get_tsc_hz()/info->latsamp_rate;		// Time based
-                            // stats->next = stats->pkt_counter + info->latsamp_rate;		// Packet count based
+                            // stats->next = now + rte_get_tsc_hz()/info->latsamp_rate;		// Time based
+                            stats->next = stats->pkt_counter + info->latsamp_rate;		// Packet count based
                         }
                     }
                 }
@@ -1301,7 +1314,9 @@ pktgen_main_receive(port_info_t *info, uint8_t lid,
 
 	pktgen_recv_tstamp(info, pkts_burst, nb_rx);
 
-	pktgen_check_rx_tstamp(info, pkts_burst, nb_rx);
+// #ifdef TDMA_ON_CX6
+// 	pktgen_check_rx_tstamp(info, pkts_burst, nb_rx);
+// #endif
 
 	/* packets are not freed in the next call. */
 	pktgen_packet_classify_bulk(pkts_burst, nb_rx, pid);

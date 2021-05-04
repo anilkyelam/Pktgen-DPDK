@@ -1436,6 +1436,34 @@ pktgen_start_stop_latency_sampler(port_info_t *info, uint32_t state)
         pktgen_stop_latency_sampler(info);
 }
 
+/* Timestamp util methods inspired from dpdk/app/test-pmd/util.c */
+static inline bool
+is_rx_timestamp_enabled()
+{
+	static bool enabled, checked = false;
+	if (!checked) {
+		enabled = rte_mbuf_dynflag_lookup(
+			RTE_MBUF_DYNFLAG_RX_TIMESTAMP_NAME, NULL) >= 0;
+		checked = true;
+	}
+	return enabled;
+}
+
+static inline bool
+is_tx_send_on_timestamp_enabled(uint64_t *mask)
+{
+	static bool enabled, checked = false;
+	static int nbit;
+	if (!checked) {
+		nbit = rte_mbuf_dynflag_lookup(RTE_MBUF_DYNFLAG_TX_TIMESTAMP_NAME, NULL);
+		// pktgen_log_warning("nbit: %d", nbit);
+		enabled = nbit >= 0;
+		checked = true;
+	}
+	*mask = 1ULL << nbit;
+	return enabled;
+}
+
 /**
  *
  * start_latency_sampler - Starts latency sampler.
@@ -1471,6 +1499,18 @@ pktgen_start_latency_sampler(port_info_t *info)
                          MAX_LATENCY_QUEUES);
         return;
     }
+
+#ifdef TDMA_ON_CX6
+    if (rte_mbuf_dynflag_lookup(RTE_MBUF_DYNFLAG_RX_TIMESTAMP_NAME, NULL) < 0){
+        pktgen_log_error("For CX6 TDMA setup, make sure rx hw timestamping is enabled for latency sampling!");
+        return;
+    }
+
+    if (rte_mbuf_dynflag_lookup(RTE_MBUF_DYNFLAG_TX_TIMESTAMP_NAME, NULL) < 0){
+        pktgen_log_error("For CX6 TDMA setup, make sure tx packet pacing feature is enabled for latency sampling!");
+        return;
+    }
+#endif
 
     for (q = 0; q < rxq; q++) {
         info->latsamp_stats[q].pkt_counter = 0;
